@@ -1,43 +1,70 @@
 import requests
-from bs4 import BeautifulSoup
 import pandas as pd
 import sqlite3
+from datetime import datetime
 
-def scrape_data(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
+def get_hourly_weather(city_name, api_key):
+    base_url = "http://api.openweathermap.org/data/2.5/forecast"
+    params = {
+        "q": city_name,
+        "appid": api_key,
+        "units": "metric"
+    }
+    response = requests.get(base_url, params=params)
+    data = response.json()
 
-    table = soup.find('table', class_='wikitable')
+    if response.status_code == 200:
+        hourly_forecast = []
+        for forecast in data['list']:
+            time = datetime.strptime(forecast['dt_txt'], '%Y-%m-%d %H:%M:%S')
+            weather_description = forecast['weather'][0]['description']
+            temperature = forecast['main']['temp']
+            humidity = forecast['main']['humidity']
+            wind_speed = forecast['wind']['speed']
+            hourly_forecast.append({
+                'time': time,
+                'weather_description': weather_description,
+                'temperature': temperature,
+                'humidity': humidity,
+                'wind_speed': wind_speed
+            })
+        return hourly_forecast
+    else:
+        return None
 
-    data = []
-    for row in table.findthere_all('tr')[1:]:
-        columns = row.find_all('td')
-        building_name = columns[0].text.strip()
-        height = columns[1].text.strip()
-        location = columns[2].text.strip()
-        data.append({'Building Name': building_name, 'Height': height, 'Location': location})
+def preprocess_hourly_weather(hourly_weather_data):
+    df = pd.DataFrame(hourly_weather_data)
 
-    return data
+    df.dropna(inplace=True)
 
-def preprocess_data(data):
-    df = pd.DataFrame(data)
+    df['time'] = pd.to_datetime(df['time'])
+
+    df['temperature'] = df['temperature'].round(2)
+
+    df['humidity'] = df['humidity'].astype(int)
+    df['wind_speed'] = df['wind_speed'].astype(int)
 
     return df
 
-def save_to_database(df, db_file, table_name):
-    conn = sqlite3.connect(db_file)
+def create_sqlite_table(df, db_name, table_name):
+    conn = sqlite3.connect(db_name)
     df.to_sql(table_name, conn, if_exists='replace', index=False)
     conn.close()
 
-def main():
-    url = 'https://en.wikipedia.org/wiki/List_of_tallest_buildings_and_structures_in_the_world'
-    data = scrape_data(url)
-    df = preprocess_data(data)
+city = "Dublin"
+api_key = "56549c0f2ba37c783450e6bff8d8951c"
+hourly_weather_data = get_hourly_weather(city, api_key)
 
-    db_file = 'tallest_buildings_data.db'
-    table_name = 'tallest_buildings'
-    save_to_database(df, db_file, table_name)
-    print("Data saved to SQLite database successfully.")
+if hourly_weather_data:
 
-if __name__ == "__main__":
-    main()
+    df = preprocess_hourly_weather(hourly_weather_data)
+
+    print(df)
+
+    db_name = 'weather_data.db'
+    table_name = 'hourly_weather'
+    create_sqlite_table(df, db_name, table_name)
+
+    print("\nWeather data successfully stored in SQLite database.\n")
+else:
+    print("\nFailed to fetch weather data.\n")
